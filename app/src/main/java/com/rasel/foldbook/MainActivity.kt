@@ -6,7 +6,10 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.WindowManager
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
@@ -51,6 +54,18 @@ class MainActivity : Activity() {
         )
         setContentView(root)
 
+        // GPU: hardware-accelerated window + WebView drawn on the GPU
+        window.setFlags(
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+        )
+        requestHighestRefreshRate()
+
+        webView.setLayerType(View.LAYER_TYPE_NONE, null) // let Chromium's own GPU compositor do the work
+        webView.overScrollMode = View.OVER_SCROLL_NEVER
+        // Keep the renderer at high priority so scrolling isn't throttled
+        webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -59,6 +74,7 @@ class MainActivity : Activity() {
             loadWithOverviewMode = true
             useWideViewPort = true
             setSupportZoom(false)
+            offscreenPreRaster = true // pre-render content just off screen -> smoother scrolling
             cacheMode = WebSettings.LOAD_DEFAULT
             // Drop the "wv" marker so Facebook treats this like normal Chrome.
             mobileUa = userAgentString.replace("; wv", "")
@@ -119,6 +135,20 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Ask for the panel's highest refresh rate (120Hz on Mix Fold 3) at the current resolution. */
+    private fun requestHighestRefreshRate() {
+        val display = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else windowManager.defaultDisplay
+        display ?: return
+        val current = display.mode
+        val best = display.supportedModes
+            .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+            .maxByOrNull { it.refreshRate } ?: return
+        val attrs = window.attributes
+        attrs.preferredDisplayModeId = best.modeId
+        attrs.preferredRefreshRate = best.refreshRate
+        window.attributes = attrs
+    }
+
     private fun wideNow() = resources.configuration.screenWidthDp >= WIDE_SCREEN_DP
 
     private fun applyUserAgent(wide: Boolean) {
@@ -145,6 +175,7 @@ class MainActivity : Activity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        requestHighestRefreshRate() // inner and outer screens have different modes
         applyMode() // runs every time you fold/unfold
     }
 
