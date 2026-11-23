@@ -15,6 +15,7 @@ import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -31,6 +32,23 @@ class MainActivity : Activity() {
         private const val DESKTOP_UA =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         private const val FILE_CHOOSER_REQUEST = 1001
+
+        /** Bangla font (Hind Siliguri, SIL OFL). Served from the app under a fake path on Facebook's own
+         *  domain, so Facebook's security rules allow it. Only Bangla characters use it. */
+        private const val FONT_PATH = "/__foldbook/fonts/"
+        private val BANGLA_FONT_JS = run {
+            val range = "U+0964-0965,U+0980-09FE,U+200C-200D,U+25CC"
+            val faces = listOf(400, 500, 600, 700).joinToString("") { w ->
+                "@font-face{font-family:'FoldBookBangla';src:url('$FONT_PATH" + "bn-$w.woff2') format('woff2');" +
+                    "font-weight:$w;font-style:normal;font-display:swap;unicode-range:$range;}"
+            }
+            val css = faces +
+                "html body,html body *:not(svg):not(path){font-family:'FoldBookBangla',system-ui,-apple-system," +
+                "'Segoe UI',Roboto,Helvetica,Arial,sans-serif !important;}"
+            "(function(){if(document.getElementById('foldbook-bn'))return;" +
+                "var s=document.createElement('style');s.id='foldbook-bn';s.textContent=\"$css\";" +
+                "(document.head||document.documentElement).appendChild(s);})();"
+        }
 
         /** Links on these domains stay in the app; everything else opens in your browser. */
         private val INTERNAL_HOSTS = listOf("facebook.com", "fbcdn.net", "fb.com", "fb.me", "messenger.com")
@@ -101,7 +119,29 @@ class MainActivity : Activity() {
                 }
             }
 
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                val path = request.url.path ?: return null
+                if (!path.startsWith(FONT_PATH)) return null
+                val name = path.removePrefix(FONT_PATH)
+                if (!name.matches(Regex("bn-\\d{3}\\.woff2"))) return null
+                return try {
+                    WebResourceResponse("font/woff2", null, assets.open("fonts/$name")).apply {
+                        responseHeaders = mapOf(
+                            "Access-Control-Allow-Origin" to "*",
+                            "Cache-Control" to "max-age=31536000"
+                        )
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+            }
+
+            override fun onPageCommitVisible(view: WebView, url: String?) {
+                view.evaluateJavascript(BANGLA_FONT_JS, null)
+            }
+
             override fun onPageFinished(view: WebView, url: String?) {
+                view.evaluateJavascript(BANGLA_FONT_JS, null)
                 CookieManager.getInstance().flush() // keep you logged in
             }
         }
