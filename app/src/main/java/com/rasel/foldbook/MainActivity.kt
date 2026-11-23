@@ -38,8 +38,10 @@ class MainActivity : Activity() {
         private const val FONT_PATH = "/__foldbook/fonts/"
         private val BANGLA_FONT_JS = run {
             val range = "U+0964-0965,U+0980-09FE,U+200C-200D,U+25CC"
-            val faces = listOf(400, 500, 600, 700).joinToString("") { w ->
-                "@font-face{font-family:'FoldBookBangla';src:url('$FONT_PATH" + "bn-$w.woff2') format('woff2');" +
+            // iPhone-like lighter look: each weight uses the next-lighter cut (normal text -> 300, bold -> 600).
+            val weights = mapOf(100 to 300, 200 to 300, 300 to 300, 400 to 300, 500 to 400, 600 to 500, 700 to 600, 800 to 600, 900 to 700)
+            val faces = weights.entries.joinToString("") { (w, file) ->
+                "@font-face{font-family:'FoldBookBangla';src:url('$FONT_PATH" + "bn-$file.woff2') format('woff2');" +
                     "font-weight:$w;font-style:normal;font-display:swap;unicode-range:$range;}"
             }
             val css = faces +
