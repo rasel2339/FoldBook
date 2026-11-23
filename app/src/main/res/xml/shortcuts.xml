@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="notifications"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_notifications">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.rasel.foldbook"
+            android:targetClass="com.rasel.foldbook.MainActivity"
+            android:data="https://m.facebook.com/notifications.php" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="messages"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_messages">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.rasel.foldbook"
+            android:targetClass="com.rasel.foldbook.MainActivity"
+            android:data="https://www.facebook.com/messages/" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="marketplace"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_marketplace">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.rasel.foldbook"
+            android:targetClass="com.rasel.foldbook.MainActivity"
+            android:data="https://m.facebook.com/marketplace/" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="saved"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/sc_saved">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.rasel.foldbook"
+            android:targetClass="com.rasel.foldbook.MainActivity"
+            android:data="https://m.facebook.com/saved/" />
+    </shortcut>
+</shortcuts>

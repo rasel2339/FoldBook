@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">FoldBook</string>
+    <string name="sc_notifications">নোটিফিকেশন</string>
+    <string name="sc_messages">মেসেজ</string>
+    <string name="sc_marketplace">Marketplace</string>
+    <string name="sc_saved">Saved</string>
 </resources>

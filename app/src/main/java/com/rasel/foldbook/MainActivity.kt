@@ -22,7 +22,9 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Rational
 import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -60,8 +62,6 @@ class MainActivity : Activity() {
         private const val DESKTOP_MIN_DP = 600
         /** Screens at least this wide (dp) count as unfolded. */
         private const val UNFOLDED_MIN_DP = 600
-        /** Share of the width the feed gets in split view. */
-        private const val MAIN_PANE_SHARE = 0.62f
 
         private const val FILE_CHOOSER_REQUEST = 1001
         private const val LOCK_REQUEST = 1002
@@ -89,6 +89,19 @@ class MainActivity : Activity() {
         private const val K_HIDE_REELS = "hide_reels"
         private const val K_HIDE_STORIES = "hide_stories"
         private const val K_LOCK = "app_lock"
+        private const val K_SHARE = "main_share"        // feed width share in split view (drag the divider)
+        private const val K_DOUBLE_TAP = "double_tap_top"
+        private const val K_DATA_SAVER = "data_saver"
+
+        /** Side pane choices: key -> (label, url, path prefix that stays in the side pane) */
+        private val SIDE_PANES = linkedMapOf(
+            "notifications" to Triple("নোটিফিকেশন", "https://m.facebook.com/notifications.php", "/notifications"),
+            "messages" to Triple("মেসেজ", "https://www.facebook.com/messages/", "/messages"),
+            "marketplace" to Triple("Marketplace", "https://m.facebook.com/marketplace/", "/marketplace"),
+            "groups" to Triple("Groups", "https://m.facebook.com/groups/", "/groups"),
+            "saved" to Triple("Saved", "https://m.facebook.com/saved/", "/saved"),
+            "friends" to Triple("Friend requests", "https://m.facebook.com/friends/", "/friends")
+        )
 
         /** Injected into every Facebook page: styles + best-effort hiding of sponsored posts / reels. */
         private const val INJECT_JS = """
@@ -113,6 +126,15 @@ class MainActivity : Activity() {
       var m = (getComputedStyle(document.body).backgroundColor || '').match(/\d+/g);
       if (m && (+m[0] + +m[1] + +m[2]) < 180) document.documentElement.classList.add('fb-amoled');
     }
+  }
+  if (!window.__fbPlay) {
+    window.__fbPlay = true;
+    // Data saver: stop videos that start by themselves (autoplay); videos you tap still play.
+    document.addEventListener('play', function(e){
+      var c = window.__fbCfg || {};
+      var tapped = navigator.userActivation && navigator.userActivation.isActive;
+      if (c.datasaver && !tapped && e.target && e.target.pause) e.target.pause();
+    }, true);
   }
   if (!window.__fbObs) {
     window.__fbObs = new MutationObserver(function(){ clearTimeout(window.__fbT); window.__fbT = setTimeout(scan, 400); });
@@ -201,7 +223,7 @@ class MainActivity : Activity() {
             applyUserAgent(webView, isDesktop!!)
             webView.restoreState(savedInstanceState)
         } else {
-            applyMode(force = true, startUrl = intent?.data?.toString())
+            applyMode(force = true, startUrl = urlFromIntent(intent))
         }
     }
 
@@ -214,7 +236,7 @@ class MainActivity : Activity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        intent?.data?.let { applyMode(force = true, startUrl = it.toString()) }
+        urlFromIntent(intent)?.let { applyMode(force = true, startUrl = it) }
     }
 
     override fun onStart() {
@@ -278,6 +300,19 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Link opened from another app, a shared link, or a home-screen shortcut. */
+    private fun urlFromIntent(intent: Intent?): String? {
+        intent ?: return null
+        intent.data?.let { if (isInternal(it)) return it.toString() }
+        if (intent.action == Intent.ACTION_SEND) {
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return null
+            val url = Regex("https?://\\S+").find(text)?.value ?: return null
+            if (isInternal(Uri.parse(url))) return url
+            openExternal(Uri.parse(url))
+        }
+        return null
+    }
+
     // ---------------------------------------------------------------- web views
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -295,6 +330,7 @@ class MainActivity : Activity() {
             offscreenPreRaster = true
             textZoom = prefs.getInt(K_ZOOM, 100)
         }
+        wv.settings.mediaPlaybackRequiresUserGesture = prefs.getBoolean(K_DATA_SAVER, false)
         wv.setLayerType(View.LAYER_TYPE_NONE, null)
         wv.overScrollMode = View.OVER_SCROLL_NEVER
         wv.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
@@ -367,6 +403,20 @@ class MainActivity : Activity() {
             }
         }
 
+        // Double-tap -> smooth scroll to the top.
+        val detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                if (!prefs.getBoolean(K_DOUBLE_TAP, true)) return false
+                wv.evaluateJavascript(
+                    "(function(){window.scrollTo({top:0,behavior:'smooth'});" +
+                        "var m=document.querySelector('[role=main]');if(m&&m.scrollTop>0)m.scrollTo({top:0,behavior:'smooth'});})();",
+                    null
+                )
+                return true
+            }
+        })
+        wv.setOnTouchListener { _, ev -> detector.onTouchEvent(ev); false }
+
         // Long-press an image -> save it to the gallery.
         wv.setOnLongClickListener {
             val type = wv.hitTestResult.type
@@ -422,7 +472,7 @@ class MainActivity : Activity() {
     private fun splitActive() = prefs.getBoolean(K_SPLIT, true) && unfolded()
 
     private fun wantDesktop(): Boolean {
-        val mainWidth = resources.configuration.screenWidthDp * (if (splitActive()) MAIN_PANE_SHARE else 1f)
+        val mainWidth = resources.configuration.screenWidthDp * (if (splitActive()) mainShare() else 1f)
         return when (prefs.getString(K_LAYOUT, "auto")) {
             "desktop" -> true
             "mobile" -> false
@@ -459,30 +509,33 @@ class MainActivity : Activity() {
         webView.loadUrl(target)
     }
 
+    private fun mainShare() = prefs.getFloat(K_SHARE, 0.62f)
+
+    private fun sidePane() = SIDE_PANES[prefs.getString(K_SIDE, "notifications")] ?: SIDE_PANES["notifications"]!!
+
     private fun sideIsMessages() = prefs.getString(K_SIDE, "notifications") == "messages"
 
-    private fun sideHomeUrl() =
-        if (sideIsMessages()) "https://www.facebook.com/messages/" else "https://m.facebook.com/notifications.php"
+    private fun sideHomeUrl() = sidePane().second
 
     private fun sideStays(uri: Uri): Boolean {
         val path = uri.path ?: return true
         if (!isInternal(uri)) return true
         if (path.contains("login") || path.contains("checkpoint")) return true
-        return if (sideIsMessages()) path.startsWith("/messages") || path.startsWith("/t/")
-        else path.startsWith("/notifications")
+        if (sideIsMessages() && path.startsWith("/t/")) return true
+        return path.startsWith(sidePane().third)
     }
 
     /** Adds or removes the side pane (notifications / messages) depending on fold state and settings. */
     private fun updateLayout() {
         val split = splitActive()
-        (refresh.layoutParams as LinearLayout.LayoutParams).weight = if (split) MAIN_PANE_SHARE else 1f
+        (refresh.layoutParams as LinearLayout.LayoutParams).weight = if (split) mainShare() else 1f
         if (split && sideWebView == null) {
-            val d = View(this).apply { setBackgroundColor(Color.parseColor("#3A3B3C")) }
-            row.addView(d, LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT))
+            val d = createDivider()
+            row.addView(d, LinearLayout.LayoutParams(dp(14), ViewGroup.LayoutParams.MATCH_PARENT))
             divider = d
             val side = createWebView(isSide = true)
             applyUserAgent(side, sideIsMessages())
-            row.addView(side, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f - MAIN_PANE_SHARE))
+            row.addView(side, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f - mainShare()))
             sideWebView = side
             side.loadUrl(sideHomeUrl())
         } else if (!split && sideWebView != null) {
@@ -492,6 +545,46 @@ class MainActivity : Activity() {
             divider = null
         }
         row.requestLayout()
+    }
+
+    /** Divider between the panes: drag it left/right to resize. */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun createDivider(): View {
+        val handle = FrameLayout(this)
+        val line = View(this).apply { setBackgroundColor(Color.parseColor("#3A3B3C")) }
+        handle.addView(line, FrameLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL))
+        val grip = View(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(3).toFloat()
+                setColor(Color.parseColor("#8A8D91"))
+            }
+        }
+        handle.addView(grip, FrameLayout.LayoutParams(dp(5), dp(44), Gravity.CENTER))
+        handle.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    (grip.background as? android.graphics.drawable.GradientDrawable)?.setColor(Color.parseColor("#818CF8"))
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val loc = IntArray(2)
+                    row.getLocationOnScreen(loc)
+                    val share = ((ev.rawX - loc[0]) / row.width).coerceIn(0.35f, 0.8f)
+                    (refresh.layoutParams as LinearLayout.LayoutParams).weight = share
+                    sideWebView?.let { (it.layoutParams as LinearLayout.LayoutParams).weight = 1f - share }
+                    row.requestLayout()
+                    prefs.edit().putFloat(K_SHARE, share).apply()
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    (grip.background as? android.graphics.drawable.GradientDrawable)?.setColor(Color.parseColor("#8A8D91"))
+                    applyMode(force = false) // a wider feed may switch to the desktop layout
+                    true
+                }
+                else -> false
+            }
+        }
+        return handle
     }
 
     // ---------------------------------------------------------------- look: fonts, dark, hiding
@@ -505,6 +598,9 @@ class MainActivity : Activity() {
         val zoom = prefs.getInt(K_ZOOM, 100)
         webView.settings.textZoom = zoom
         sideWebView?.settings?.textZoom = zoom
+        val saver = prefs.getBoolean(K_DATA_SAVER, false)
+        webView.settings.mediaPlaybackRequiresUserGesture = saver
+        sideWebView?.settings?.mediaPlaybackRequiresUserGesture = saver
     }
 
     private fun buildCss(): String {
@@ -549,6 +645,7 @@ class MainActivity : Activity() {
             .put("sponsored", prefs.getBoolean(K_HIDE_ADS, false))
             .put("reels", prefs.getBoolean(K_HIDE_REELS, false))
             .put("amoled", prefs.getBoolean(K_AMOLED, false))
+            .put("datasaver", prefs.getBoolean(K_DATA_SAVER, false))
         return INJECT_JS
             .replace("%CSS%", JSONObject.quote(buildCss()))
             .replace("%CFG%", cfg.toString())
@@ -606,10 +703,11 @@ class MainActivity : Activity() {
         )
         val split = switch("আনফোল্ডে স্প্লিট ভিউ", K_SPLIT, true)
         val sideGroup = radios(
-            listOf("notifications" to "পাশে: নোটিফিকেশন", "messages" to "পাশে: মেসেজ"),
+            SIDE_PANES.map { (key, v) -> key to "পাশে: ${v.first}" },
             K_SIDE, "notifications"
         )
         val pull = switch("টেনে রিফ্রেশ", K_PULL, true)
+        val doubleTap = switch("ডাবল-ট্যাপে একদম উপরে যাও", K_DOUBLE_TAP, true)
 
         header("লেখা")
         val zoomLabel = TextView(this).apply { setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f) }
@@ -644,6 +742,20 @@ class MainActivity : Activity() {
         val hideReels = switch("Reels লুকাও", K_HIDE_REELS, false)
         val hideStories = switch("Stories লুকাও", K_HIDE_STORIES, false)
 
+        header("ডাটা")
+        val dataSaver = switch("ডাটা সেভার (ভিডিও অটো-প্লে বন্ধ)", K_DATA_SAVER, false)
+        content.addView(TextView(this).apply {
+            text = "🧹 ক্যাশ ক্লিয়ার করো (লগইন থাকবে)"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextColor(Color.parseColor("#A5B4FC"))
+            setPadding(0, dp(10), 0, dp(10))
+            setOnClickListener {
+                webView.clearCache(true)
+                sideWebView?.clearCache(true)
+                Toast.makeText(this@MainActivity, "ক্যাশ ক্লিয়ার হয়েছে", Toast.LENGTH_SHORT).show()
+            }
+        })
+
         header("নিরাপত্তা")
         val lock = switch("অ্যাপ লক (ফিঙ্গারপ্রিন্ট / স্ক্রিন লক)", K_LOCK, false)
 
@@ -661,12 +773,14 @@ class MainActivity : Activity() {
             .setView(scroll)
             .setNegativeButton("বাতিল", null)
             .setPositiveButton("সেভ") { _, _ ->
-                val oldSide = sideIsMessages()
+                val oldSide = prefs.getString(K_SIDE, "notifications")
                 prefs.edit()
                     .putString(K_LAYOUT, layoutGroup.findViewById<RadioButton>(layoutGroup.checkedRadioButtonId)?.tag as? String ?: "auto")
                     .putBoolean(K_SPLIT, split.isChecked)
                     .putString(K_SIDE, sideGroup.findViewById<RadioButton>(sideGroup.checkedRadioButtonId)?.tag as? String ?: "notifications")
                     .putBoolean(K_PULL, pull.isChecked)
+                    .putBoolean(K_DOUBLE_TAP, doubleTap.isChecked)
+                    .putBoolean(K_DATA_SAVER, dataSaver.isChecked)
                     .putInt(K_ZOOM, zoom.progress + 70)
                     .putBoolean(K_BN_FONT, bnFont.isChecked)
                     .putBoolean(K_LIGHT, light.isChecked)
@@ -678,7 +792,7 @@ class MainActivity : Activity() {
                     .putBoolean(K_LOCK, lock.isChecked)
                     .apply()
                 if (lock.isChecked) unlocked = true // just set by the owner; don't lock immediately
-                if (oldSide != sideIsMessages()) {
+                if (oldSide != prefs.getString(K_SIDE, "notifications")) {
                     sideWebView?.let { applyUserAgent(it, sideIsMessages()); it.loadUrl(sideHomeUrl()) }
                 }
                 applyLook()
