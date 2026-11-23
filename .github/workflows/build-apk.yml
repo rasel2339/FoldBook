@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,3 +29,13 @@ jobs:
         with:
           name: FoldBook-apk
           path: app/build/outputs/apk/release/*.apk
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/*.apk FoldBook.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: FoldBook (latest)
+          files: FoldBook.apk
+          make_latest: true
