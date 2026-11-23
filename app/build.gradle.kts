@@ -11,8 +11,8 @@ android {
         applicationId = "com.rasel.foldbook"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "2.0"
     }
 
     // Fixed signing key so every new APK installs as an update (login and data stay).
@@ -47,4 +47,6 @@ android {
     }
 }
 
-// No extra libraries needed — uses only the Android framework.
+dependencies {
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+}
