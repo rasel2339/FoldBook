@@ -7,7 +7,6 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.view.Gravity
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.ValueCallback
@@ -21,10 +20,13 @@ import android.widget.FrameLayout
 class MainActivity : Activity() {
 
     companion object {
-        /** Change this number for a narrower or wider feed when the phone is unfolded (in dp). */
-        private const val MAX_CONTENT_WIDTH_DP = 600
+        /** Screens wider than this (dp) get the full desktop layout; narrower get the mobile site. */
+        private const val WIDE_SCREEN_DP = 600
 
-        private const val HOME_URL = "https://m.facebook.com/"
+        private const val MOBILE_HOME = "https://m.facebook.com/"
+        private const val DESKTOP_HOME = "https://www.facebook.com/"
+        private const val DESKTOP_UA =
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         private const val FILE_CHOOSER_REQUEST = 1001
 
         /** Links on these domains stay in the app; everything else opens in your browser. */
@@ -34,6 +36,8 @@ class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private lateinit var webView: WebView
     private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private lateinit var mobileUa: String
+    private var isWide: Boolean? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,7 +61,8 @@ class MainActivity : Activity() {
             setSupportZoom(false)
             cacheMode = WebSettings.LOAD_DEFAULT
             // Drop the "wv" marker so Facebook treats this like normal Chrome.
-            userAgentString = userAgentString.replace("; wv", "")
+            mobileUa = userAgentString.replace("; wv", "")
+            userAgentString = mobileUa
         }
 
         CookieManager.getInstance().apply {
@@ -104,37 +109,48 @@ class MainActivity : Activity() {
             }
         }
 
-        applyWidth()
-
+        val startUrl = intent?.data?.toString()
         if (savedInstanceState != null) {
+            isWide = wideNow()
+            applyUserAgent(isWide!!)
             webView.restoreState(savedInstanceState)
         } else {
-            webView.loadUrl(intent?.data?.toString() ?: HOME_URL)
+            applyMode(startUrl)
         }
     }
 
-    /** Folded: full width. Unfolded: feed centred at MAX_CONTENT_WIDTH_DP. */
-    private fun applyWidth() {
-        val config = resources.configuration
-        val density = resources.displayMetrics.density
-        val lp = webView.layoutParams as FrameLayout.LayoutParams
-        lp.width = if (config.screenWidthDp > MAX_CONTENT_WIDTH_DP) {
-            (MAX_CONTENT_WIDTH_DP * density).toInt()
-        } else {
-            ViewGroup.LayoutParams.MATCH_PARENT
+    private fun wideNow() = resources.configuration.screenWidthDp >= WIDE_SCREEN_DP
+
+    private fun applyUserAgent(wide: Boolean) {
+        webView.settings.userAgentString = if (wide) DESKTOP_UA else mobileUa
+    }
+
+    /** Unfolded: full-screen desktop layout. Folded: mobile layout. Reloads only when the mode changes. */
+    private fun applyMode(startUrl: String? = null) {
+        val wide = wideNow()
+        if (wide == isWide && startUrl == null) return
+        isWide = wide
+        applyUserAgent(wide)
+
+        val current = startUrl ?: webView.url
+        val target = when {
+            current.isNullOrBlank() -> if (wide) DESKTOP_HOME else MOBILE_HOME
+            wide -> current.replace("://m.facebook.com", "://www.facebook.com")
+                .replace("://mbasic.facebook.com", "://www.facebook.com")
+            else -> current.replace("://www.facebook.com", "://m.facebook.com")
+                .replace("://web.facebook.com", "://m.facebook.com")
         }
-        lp.gravity = Gravity.CENTER_HORIZONTAL
-        webView.layoutParams = lp
+        webView.loadUrl(target)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        applyWidth() // runs every time you fold/unfold
+        applyMode() // runs every time you fold/unfold
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        intent?.data?.let { webView.loadUrl(it.toString()) }
+        intent?.data?.let { applyMode(it.toString()) }
     }
 
     @Deprecated("Deprecated in Java")
