@@ -11,15 +11,30 @@ android {
         applicationId = "com.rasel.foldbook"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // Fixed signing key so every new APK installs as an update (login and data stay).
+    // The keystore is password-protected; the password comes from the GitHub secret
+    // FOLDBOOK_KEY_PASSWORD and is never stored in the repo.
+    val keyPassword: String? = System.getenv("FOLDBOOK_KEY_PASSWORD")
+    signingConfigs {
+        if (keyPassword != null) {
+            create("foldbook") {
+                storeFile = file("foldbook.jks")
+                storePassword = keyPassword
+                keyAlias = "foldbook"
+                this.keyPassword = keyPassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Personal use: sign release with the debug key so you can install it directly.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("foldbook")
+                ?: error("FOLDBOOK_KEY_PASSWORD secret is missing - add it in GitHub repo settings")
         }
     }
 
